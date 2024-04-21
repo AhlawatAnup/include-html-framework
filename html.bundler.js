@@ -46,7 +46,10 @@ class HTMLBundler {
         if (src) {
           // READING COMPONENTS
           const content = fs.readFileSync(
-            path.join(path.dirname(path.join(__dirname, reference_file)), src),
+            path.join(
+              path.dirname(path.join(process.cwd(), reference_file)),
+              src
+            ),
             "utf8"
           );
           $(element).after(content);
