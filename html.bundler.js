@@ -1,7 +1,7 @@
 const cheerio = require("cheerio");
 const fs = require("fs");
 const path = require("path");
-const { entries, output } = require("./hpack.config");
+const { entries, output } = require("../hpack.config");
 
 class HTMLBundler {
   constructor() {}
@@ -13,7 +13,7 @@ class HTMLBundler {
       if (eventType === "change") {
         // CALLING HTML BUNDLER EVERY TIME THE FILES SAVE
 
-        const directoryPath = path.join(output.path, entry);
+        const directoryPath = path.join(output.path, entry + ".pack");
         // If not, create it recursively
         if (!fs.existsSync(directoryPath)) {
           fs.mkdirSync(directoryPath, { recursive: true });
@@ -22,7 +22,7 @@ class HTMLBundler {
 
         this.html_bundler(
           entry_value,
-          path.join(output.path, entry, path.basename(entry_value))
+          path.join(output.path, entry + ".pack", path.basename(entry_value))
         );
       }
     });
@@ -58,6 +58,7 @@ class HTMLBundler {
       });
 
       fs.writeFile(output_file, $.html(), (err) => {
+        console.log(output_file);
         if (err) {
           console.error("Error writing file:", err);
           return;
