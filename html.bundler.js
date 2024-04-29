@@ -8,6 +8,14 @@ class HTMLBundler {
 
   // HTML WATCHER
   html_watcher(entry, entry_value) {
+    // RUNNING FIRST TIME
+
+    this.html_bundler(
+      entry_value,
+      path.join(output.path, entry + ".pack", path.basename(entry_value))
+    );
+
+    // WATCHING THE FILE
     fs.watch(entry_value, (eventType, filename) => {
       console.log(`File ${filename} has been ${eventType}`);
       if (eventType === "change") {
