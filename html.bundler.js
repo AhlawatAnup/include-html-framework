@@ -49,7 +49,6 @@ class HTMLBundler {
       //SELECTING THE ALL ELEMENTS WITH INCLUDE TAG
       const $ = cheerio.load(html);
       $("include").each((index, element) => {
-        //   console.log($(element).attr("src"));
         const src = $(element).attr("src");
         if (src) {
           // READING COMPONENTS
