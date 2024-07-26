@@ -5,7 +5,8 @@ const { entries, output } = require("./hpack.config");
 
 class HTMLBundler {
   constructor() {
-    this.watchedFiles = new Set(); // To track watched files
+    // TRACKING WATCH FILES
+    this.watchedFiles = new Set();
   }
 
   // HTML WATCHER
@@ -37,7 +38,7 @@ class HTMLBundler {
     });
 
     // Adding watchComponentFiles functionality
-    this.watchComponentFiles(entry_value);
+    this.watchComponentFiles(entry, entry_value);
   }
 
   // HTML BUNDLER
@@ -69,10 +70,7 @@ class HTMLBundler {
     $("include").each((index, element) => {
       const src = $(element).attr("src");
       if (src) {
-        const component_path = path.join(
-          path.dirname(reference_file),
-          src
-        );
+        const component_path = path.join(path.dirname(reference_file), src);
 
         const content = fs.readFileSync(component_path, "utf8");
         const comp_content = cheerio.load(content);
@@ -84,21 +82,18 @@ class HTMLBundler {
     });
   }
 
-  watchComponentFiles(public_path_name) {
+  watchComponentFiles(entry, public_path_name) {
     const data = fs.readFileSync(public_path_name, "utf8");
     const $ = cheerio.load(data);
 
     $("include").each((index, element) => {
       const src = $(element).attr("src");
-      const component_path = path.join(
-        path.dirname(public_path_name),
-        src
-      );
+      const component_path = path.join(path.dirname(public_path_name), src);
 
       if (!this.watchedFiles.has(component_path)) {
         fs.watchFile(component_path, (curr, prev) => {
           if (curr.mtime !== prev.mtime) {
-            this.processAndSaveHtml(public_path_name);
+            this.processAndSaveHtml(entry, public_path_name);
           }
         });
         this.watchedFiles.add(component_path);
@@ -109,15 +104,12 @@ class HTMLBundler {
 
       comp_content("include").each((index, element) => {
         const newsrc = comp_content(element).attr("src");
-        const component_type = path.join(
-          path.dirname(component_path),
-          newsrc
-        );
+        const component_type = path.join(path.dirname(component_path), newsrc);
 
         if (!this.watchedFiles.has(component_type)) {
           fs.watchFile(component_type, (curr, prev) => {
             if (curr.mtime !== prev.mtime) {
-              this.processAndSaveHtml(public_path_name);
+              this.processAndSaveHtml(entry, public_path_name);
             }
           });
           this.watchedFiles.add(component_type);
@@ -126,26 +118,27 @@ class HTMLBundler {
     });
   }
 
-  processAndSaveHtml(public_path_name) {
+  processAndSaveHtml(entry, public_path_name) {
     try {
       const data = fs.readFileSync(public_path_name, "utf8");
       const $ = cheerio.load(data);
       this.processIncludeTags($, public_path_name);
+      const output_file = path.join(
+        output.path,
+        entry + ".pack",
+        path.basename(public_path_name)
+      );
 
-      this.trigger_save_file($.html());
+      fs.writeFile(output_file, $.html(), "utf8", (err) => {
+        if (err) {
+          console.error("Error writing the new HTML file:", err);
+          return;
+        }
+        console.log("Modified HTML file has been saved.");
+      });
     } catch (err) {
       console.error("Error reading file:", err);
     }
-  }
-
-  trigger_save_file(modifiedHtml) {
-    fs.writeFile("./public/dashboard.pack/index.html", modifiedHtml, "utf8", (err) => {
-      if (err) {
-        console.error("Error writing the new HTML file:", err);
-        return;
-      }
-      console.log("Modified HTML file has been saved.");
-    });
   }
 }
 
