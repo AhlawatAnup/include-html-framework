@@ -1,155 +1,145 @@
 const cheerio = require("cheerio");
 const fs = require("fs");
 const path = require("path");
+const chokidar = require("chokidar");
+const { minify } = require("html-minifier-terser");
 const { entries, output } = require("./hpack.config");
 
 class HTMLBundler {
   constructor() {
-    // TRACKING WATCH FILES
-    this.watchedFiles = new Set();
-  }
+    this.entryDependencies = new Map(); // entry -> files
+    this.fileToEntries = new Map(); // file -> entries
 
-  // HTML WATCHER
-  html_watcher(entry, entry_value) {
-    // RUNNING FIRST TIME
-    this.html_bundler(
-      entry_value,
-      path.join(output.path, entry + ".pack", path.basename(entry_value))
-    );
-
-    // WATCHING THE FILE
-    fs.watch(entry_value, (eventType, filename) => {
-      console.log(`File ${filename} has been ${eventType}`);
-      if (eventType === "change") {
-        // CALLING HTML BUNDLER EVERY TIME THE FILES SAVE
-
-        const directoryPath = path.join(output.path, entry + ".pack");
-        // If not, create it recursively
-        if (!fs.existsSync(directoryPath)) {
-          fs.mkdirSync(directoryPath, { recursive: true });
-          console.log(`Directory created at ${directoryPath}`);
-        }
-
-        this.html_bundler(
-          entry_value,
-          path.join(output.path, entry + ".pack", path.basename(entry_value))
-        );
-      }
+    this.watcher = chokidar.watch([], {
+      ignoreInitial: true,
+      persistent: true
     });
 
-    // Adding watchComponentFiles functionality
-    this.watchComponentFiles(entry, entry_value);
+    this.watcher.on("change", filePath => {
+      console.log("File changed:", filePath);
+      this.rebuildAffected(filePath);
+    });
   }
 
-  // HTML BUNDLER
-  html_bundler(reference_file, output_file) {
-    // READ THE FILE
-    fs.readFile(reference_file, "utf8", (err, html) => {
-      console.log("Focusing on File !");
-      if (err) {
-        console.error("Error reading file:", err);
+  async build(entryName, entryFile) {
+    try {
+      const html = fs.readFileSync(entryFile, "utf8");
+      const $ = cheerio.load(html);
+
+      const dependencies = new Set();
+
+      this.processIncludeTags($, entryFile, dependencies);
+
+      this.removeComments($);
+
+      const minifiedHTML = await minify($.html(), {
+        collapseWhitespace: true,
+        removeComments: true,
+        minifyCSS: true,
+        minifyJS: true
+      });
+
+      const outputDir = path.join(output.path, entryName + ".pack");
+
+      if (!fs.existsSync(outputDir)) {
+        fs.mkdirSync(outputDir, { recursive: true });
+      }
+
+      const outputFile = path.join(outputDir, path.basename(entryFile));
+
+      fs.writeFileSync(outputFile, minifiedHTML, "utf8");
+
+      console.log("Bundled:", entryName);
+
+      this.updateDependencyGraph(entryName, entryFile, dependencies);
+
+      // WATCH ALL DEPENDENCIES
+      this.addWatchFiles([entryFile, ...dependencies]);
+    } catch (err) {
+      console.error("Build Error:", err);
+    }
+  }
+
+  processIncludeTags($, referenceFile, dependencies) {
+    $("include").each((index, element) => {
+      const src = $(element).attr("src");
+
+      if (!src) return;
+
+      const componentPath = path.join(path.dirname(referenceFile), src);
+
+      if (!fs.existsSync(componentPath)) {
+        console.error("Component not found:", componentPath);
         return;
       }
 
-      // SELECTING ALL THE ELEMENTS WITH INCLUDE TAG
-      const $ = cheerio.load(html);
-      this.processIncludeTags($, reference_file);
+      dependencies.add(componentPath);
 
-      fs.writeFile(output_file, $.html(), (err) => {
-        console.log(output_file);
-        if (err) {
-          console.error("Error writing file:", err);
-          return;
+      const content = fs.readFileSync(componentPath, "utf8");
+
+      const component$ = cheerio.load(content);
+
+      this.processIncludeTags(component$, componentPath, dependencies);
+
+      $(element).replaceWith(component$.html());
+    });
+  }
+
+  removeComments($) {
+    $("*")
+      .contents()
+      .each(function() {
+        if (this.type === "comment") {
+          $(this).remove();
         }
-        console.log("HTML Bundled Successfully");
       });
-    });
   }
 
-  processIncludeTags($, reference_file) {
-    $("include").each((index, element) => {
-      const src = $(element).attr("src");
-      if (src) {
-        const component_path = path.join(path.dirname(reference_file), src);
+  updateDependencyGraph(entryName, entryFile, dependencies) {
+    dependencies.add(entryFile);
 
-        const content = fs.readFileSync(component_path, "utf8");
-        const comp_content = cheerio.load(content);
-        this.processIncludeTags(comp_content, component_path); // Process nested include tags
+    this.entryDependencies.set(entryName, dependencies);
 
-        $(element).after(comp_content.html());
-        $(element).remove();
-      }
-    });
-  }
-
-  watchComponentFiles(entry, public_path_name) {
-    const data = fs.readFileSync(public_path_name, "utf8");
-    const $ = cheerio.load(data);
-
-    $("include").each((index, element) => {
-      const src = $(element).attr("src");
-      const component_path = path.join(path.dirname(public_path_name), src);
-
-      if (!this.watchedFiles.has(component_path)) {
-        fs.watchFile(component_path, (curr, prev) => {
-          if (curr.mtime !== prev.mtime) {
-            this.processAndSaveHtml(entry, public_path_name);
-          }
-        });
-        this.watchedFiles.add(component_path);
+    dependencies.forEach(file => {
+      if (!this.fileToEntries.has(file)) {
+        this.fileToEntries.set(file, new Set());
       }
 
-      const content = fs.readFileSync(component_path, "utf8");
-      const comp_content = cheerio.load(content);
-
-      comp_content("include").each((index, element) => {
-        const newsrc = comp_content(element).attr("src");
-        const component_type = path.join(path.dirname(component_path), newsrc);
-
-        if (!this.watchedFiles.has(component_type)) {
-          fs.watchFile(component_type, (curr, prev) => {
-            if (curr.mtime !== prev.mtime) {
-              this.processAndSaveHtml(entry, public_path_name);
-            }
-          });
-          this.watchedFiles.add(component_type);
-        }
-      });
+      this.fileToEntries.get(file).add(entryName);
     });
   }
 
-  processAndSaveHtml(entry, public_path_name) {
-    try {
-      const data = fs.readFileSync(public_path_name, "utf8");
-      const $ = cheerio.load(data);
-      this.processIncludeTags($, public_path_name);
-      const output_file = path.join(
-        output.path,
-        entry + ".pack",
-        path.basename(public_path_name)
-      );
+  addWatchFiles(files) {
+    files.forEach(file => {
+      this.watcher.add(file);
+    });
+  }
 
-      fs.writeFile(output_file, $.html(), "utf8", (err) => {
-        if (err) {
-          console.error("Error writing the new HTML file:", err);
-          return;
-        }
-        console.log("Modified HTML file has been saved.");
-      });
-    } catch (err) {
-      console.error("Error reading file:", err);
+  async rebuildAffected(filePath) {
+    const affectedEntries = this.fileToEntries.get(filePath);
+
+    if (!affectedEntries) return;
+
+    for (const entryName of affectedEntries) {
+      const entryFile = entries[entryName];
+
+      console.log("Rebuilding:", entryName);
+
+      await this.build(entryName, entryFile);
+    }
+  }
+
+  async buildAllEntries() {
+    for (const entryName in entries) {
+      await this.build(entryName, entries[entryName]);
     }
   }
 }
 
-const start_watching_file = () => {
-  for (var entry in entries) {
-    console.log("Tracking Files : ", entry);
-    const watcher = new HTMLBundler();
-    watcher.html_watcher(entry, entries[entry]);
-    // WATCH HTML FILE FOR CHANGE
-  }
-};
+async function startBundler() {
+  const bundler = new HTMLBundler();
 
-// START WATCHING FILE
-start_watching_file();
+  await bundler.buildAllEntries();
+}
+
+startBundler();
